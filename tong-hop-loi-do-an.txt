@@ -1,0 +1,101 @@
+================================== TINY COLLEGE ====================================
+
+
+I. Lỗi code 
+
+1. Lỗi 1: TinyCollege thiếu dấu ; sau INSERT INTO ENROLL - line 361
+2. Lỗi 2: ROOM_CODE = 'HUM' sai khóa ngoại(nhầm mã toà nhà với mã phòng) - phần insert into bắt đầu từ dòng 225 
+3. Lỗi 3: Ghi “VIEW” nhưng không tạo view
+- nhiều đoạn kiểu "SELECT * FROM `CLASS_INFO`;" nhưng chưa tạo view
+4. Lỗi 4: Script không chạy lại được nhiều lần - dòng 7
+- dùng "CREATE DATABASE IF NOT EXISTS TinyCollege;" nhưng bên trong lại dùng "CREATE TABLE SCHOOL ...", nếu chạy 2 lần sẽ báo lỗi vì bảng đã tồn tại 
+- nên để đầu mỗi đề tài giống thế này:  DROP DATABASE IF EXISTS TinyCollege;
+                                        CREATE DATABASE TinyCollege
+                                        CHARACTER SET utf8mb4 (dùng cho tiếng việt có dấu)
+                                        COLLATE utf8mb4_unicode_ci;
+                                        USE TinyCollege; 
+
+II. Lỗi Logic 
+
+1. CLASS_TIME để dạng chuỗi, khó kiểm tra trùng lịch 
+- Đề xuất:  CREATE TABLE CLASS_MEETING (
+            CLASS_CODE VARCHAR(20),
+            DAY_OF_WEEK ENUM('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'),
+            START_TIME TIME NOT NULL,
+            END_TIME TIME NOT NULL,
+            PRIMARY KEY (CLASS_CODE, DAY_OF_WEEK, START_TIME),
+            FOREIGN KEY (CLASS_CODE) REFERENCES CLASS(CLASS_CODE),
+            CHECK (END_TIME > START_TIME)
+            );
+2. Query “dưới C” đang sai logic - dòng 658
+3. Query “giáo sư dạy nhiều lớp nhất” chưa lấy “nhiều nhất" - line 614
+- nên thêm LIMIT 1 
+4. GPA nên tính theo tín chỉ 
+
+
+================================== TRANSCO ====================================
+1. Bảng WAREHOUSE bị tạo 2 khóa ngoại giống nhau - Có 2 dòng cùng trỏ MANAGER_EMP_CODE sang EMPLOYEE: - dòng 1200 và 1204 
+2. BRANCH và EMPLOYEE bị phụ thuộc vòng
+- BRANCH có MANAGER_EMP_CODE trỏ tới EMPLOYEE
+- EMPLOYEE có BRANCH_CODE trỏ tới BRANCH 
+- Ở đây đang dùng SET FOREIGN_KEY_CHECKS = 0 để vượt qua, nên sửa lại sạch hơn: 1. Insert BRANCH trước với MANAGER_EMP_CODE = NULL.
+                                                                                2. Insert EMPLOYEE.
+                                                                                3. Update lại manager cho branch.
+3. Query đếm On the way đang sai chữ hoa và thường
+4. Query 21 và 23 có nguy cơ tính sai TOTAL_CAPACITY
+- query 21 "SUM(w.`CAPACITY`) AS TOTAL_CAPACITY", Nhưng bảng WAREHOUSE đang JOIN với ORDER_WAREHOUSE_LOG. Một kho có nhiều log thì capacity của kho đó bị cộng lặp nhiều lần
+- Ví dụ kho WH_HN_01 có 5 log, capacity 5000, khi JOIN sẽ có thể bị tính thành 25000, tốt hơn là tách aggregate
+Mẫu sửa:
+WITH warehouse_capacity AS (
+    SELECT
+        BRANCH_CODE,
+        COUNT(*) AS TOTAL_WAREHOUSES,
+        SUM(CAPACITY) AS TOTAL_CAPACITY
+    FROM WAREHOUSE
+    GROUP BY BRANCH_CODE
+),
+warehouse_activity AS (
+    SELECT
+        w.BRANCH_CODE,
+        COUNT(owl.ORDER_CODE) AS TOTAL_ORDERS_STORED,
+        COUNT(CASE WHEN owl.STORAGE_STATUS = 'In' THEN 1 END) AS ORDERS_IN,
+        COUNT(CASE WHEN owl.STORAGE_STATUS = 'Out' THEN 1 END) AS ORDERS_OUT
+    FROM WAREHOUSE w
+    LEFT JOIN ORDER_WAREHOUSE_LOG owl
+        ON w.WAREHOUSE_CODE = owl.WAREHOUSE_CODE
+    GROUP BY w.BRANCH_CODE
+)
+SELECT
+    b.BRANCH_CODE,
+    b.BRANCH_NAME,
+    wc.TOTAL_WAREHOUSES,
+    wc.TOTAL_CAPACITY,
+    wa.TOTAL_ORDERS_STORED,
+    wa.ORDERS_IN,
+    wa.ORDERS_OUT
+FROM BRANCH b
+JOIN warehouse_capacity wc ON b.BRANCH_CODE = wc.BRANCH_CODE
+LEFT JOIN warehouse_activity wa ON b.BRANCH_CODE = wa.BRANCH_CODE;
+5. Query 25 có thể chia cho 0
+6. Bảng ROUTE_VEHICLE chưa được liên kết thật sự với SHIPMENT
+- Hiện tại ROUTE_VEHICLE lưu xe chạy tuyến nào, giờ đi/giờ đến: 
+"ROUTE_VEHICLE_CODE
+ROUTE_CODE
+VEHICLE_CODE
+DEPARTURE_TIME
+ARRIVAL_TIME"
+- Nhưng bảng SHIPMENT lại tự lưu riêng:
+"VEHICLE_CODE
+ROUTE_CODE
+SHIP_DATE"
+- Thiết kế tốt hơn 
+"CREATE TABLE SHIPMENT (
+    SHIP_CODE VARCHAR(20) PRIMARY KEY,
+    ORDER_CODE VARCHAR(20) NOT NULL,
+    ROUTE_VEHICLE_CODE VARCHAR(20) NOT NULL,
+    EMP_CODE VARCHAR(20) NOT NULL,
+    WAREHOUSE_CODE VARCHAR(20) NOT NULL,
+    SHIP_DATE DATETIME NOT NULL,
+    SHIP_STATUS VARCHAR(50) NOT NULL,
+    FOREIGN KEY (ROUTE_VEHICLE_CODE) REFERENCES ROUTE_VEHICLE(ROUTE_VEHICLE_CODE)
+);"
